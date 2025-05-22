@@ -16,7 +16,7 @@ spec:
     spec:
       containers:
       - name: mcp-server
-        image: gcr.io/${PROJECT_ID}/mcp-server:latest
+        image: us-docker.pkg.dev/cloudrun/container/mcp:latest
         ports:
         - containerPort: 8080
         env:
