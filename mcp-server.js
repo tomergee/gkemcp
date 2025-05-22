@@ -26,146 +26,29 @@ import { StdioServerTransport } from "@modelcontextprotocol/sdk/server/stdio.js"
 import { registerTools, registerToolsRemote } from './tools.js';
 import { checkGCP } from './lib/gcp-metadata.js';
 
-const gcpInfo = await checkGCP();
-
-/**
- * Ensure that console.log and console.error are compatible with stdio.
- * (Right now, it just disables them)
- */
-function makeLoggingCompatibleWithStdio() {
-  // redirect all console.log (which usually go to to stdout) to stderr.
-  console.log = console.error;
-}
-
-function shouldStartStdio() {
-  if (gcpInfo && gcpInfo.project) {
-    return false;
-  }
-  return true;
-}
-
-if(shouldStartStdio()) {
-  makeLoggingCompatibleWithStdio();
-};
-
-async function getServer () {
-  // Create an MCP server with implementation details
-  const server = new McpServer({
-    name: 'cloud-run',
-    version: '1.0.0',
-  }, { capabilities: { logging: {} } });
-
-  if (gcpInfo && gcpInfo.project) {
-    console.log(`Running on GCP project: ${gcpInfo.project}, region: ${gcpInfo.region}. Using tools optimized for remote use.`);
-    await registerToolsRemote(server);
-  } else {
-    console.log('Not running on GCP. Using tools optimized for local use.');
-    await registerTools(server);
-  }
-
-  return server;
-}
-
 const app = express();
+const port = process.env.PORT || 8080;
+
 app.use(express.json());
 
-app.post('/mcp', async (req, res) => {
-  console.log('/mcp Received:', req.body);
-  const server = await getServer();
-  try {
-    const transport = new StreamableHTTPServerTransport({
-      sessionIdGenerator: undefined,
-    });
-    await server.connect(transport);
-    await transport.handleRequest(req, res, req.body);
-    res.on('close', () => {
-      console.log('Request closed');
-      transport.close();
-      server.close();
-    });
-  } catch (error) {
-    console.error('Error handling MCP request:', error);
-    if (!res.headersSent) {
-      res.status(500).json({
-        jsonrpc: '2.0',
-        error: {
-          code: -32603,
-          message: 'Internal server error',
-        },
-        id: null,
-      });
-    }
-  }
-});
-
-app.get('/mcp', async (req, res) => {
-  console.log('Received GET MCP request');
-  res.writeHead(405).end(JSON.stringify({
-    jsonrpc: "2.0",
-    error: {
-      code: -32000,
-      message: "Method not allowed."
-    },
-    id: null
-  }));
-});
-
-app.delete('/mcp', async (req, res) => {
-  console.log('Received DELETE MCP request');
-  res.writeHead(405).end(JSON.stringify({
-    jsonrpc: "2.0",
-    error: {
-      code: -32000,
-      message: "Method not allowed."
-    },
-    id: null
-  }));
-});
-
-// Support SSE for baackward compatibility
-const sseTransports = {};
-
-// Legacy SSE endpoint for older clients
-app.get('/sse', async (req, res) => {
-  console.log('/sse Received:', req.body);
-  const server = await getServer();
-  // Create SSE transport for legacy clients
-  const transport = new SSEServerTransport('/messages', res);
-  sseTransports[transport.sessionId] = transport;
-  
-  res.on("close", () => {
-    delete sseTransports[transport.sessionId];
-  });
-  
-  await server.connect(transport);
-});
-
-// Legacy message endpoint for older clients
-app.post('/messages', async (req, res) => {
-  console.log('/messages Received:', req.body);
-  const sessionId = req.query.sessionId;
-  const transport = sseTransports[sessionId];
-  if (transport) {
-    await transport.handlePostMessage(req, res, req.body);
-  } else {
-    res.status(400).send('No transport found for sessionId');
-  }
-});
-
-// stdio
-if (shouldStartStdio()) {
-  const stdioTransport = new StdioServerTransport();
-  const server = await getServer();
-  await server.connect(stdioTransport);
-  console.log('Cloud Run MCP server stdio transport connected');
+// Register tools based on environment
+const gcpInfo = await checkGCP();
+if (gcpInfo) {
+  console.log('Running in GCP environment, registering remote tools...');
+  await registerToolsRemote(app);
 } else {
-  console.log('Running on GCP, stdio transport will not be started.');
+  console.log('Running locally, registering local tools...');
+  registerTools(app);
 }
 
-// Start the server
-const PORT = process.env.PORT || 3000;
-app.listen(PORT, () => {
-  console.log(`Cloud Run MCP server listening on port ${PORT}`);
+// Health check endpoint
+app.get('/health', (req, res) => {
+  res.status(200).send('OK');
+});
+
+// Start server
+app.listen(port, () => {
+  console.log(`MCP server listening on port ${port}`);
 });
 
 // Handle server shutdown

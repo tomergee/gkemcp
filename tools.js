@@ -15,8 +15,8 @@ limitations under the License.
 */
 
 import { z } from "zod";
-import { deploy } from './lib/cloud-run-deploy.js';
-import { listServices, getService } from './lib/cloud-run-services.js';
+import { deploy } from './lib/gke-deploy.js';
+import { listClusters, getCluster } from './lib/gke-clusters.js';
 import { listProjects, createProjectAndAttachBilling } from './lib/gcp-projects.js';
 import { checkGCP } from './lib/gcp-metadata.js';
 
@@ -80,13 +80,13 @@ export const registerTools = (server) => {
     }
   );
 
-  // Listing Cloud Run services
+  // Listing GKE clusters
   server.tool(
-    "list_services",
-    "Lists Cloud Run services in a given project and region.",
+    "list_clusters",
+    "Lists GKE clusters in a given project and region.",
     {
       project: z.string().describe("Google Cloud project ID"),
-      region: z.string().describe("Region where the services are located").default('europe-west1'),
+      region: z.string().describe("Region where the clusters are located").default('europe-west1'),
     },
     async ({ project, region }) => {
       if (typeof project !== 'string') {
@@ -94,58 +94,58 @@ export const registerTools = (server) => {
       }
 
       try {
-        const services = await listServices(project, region);
-        const serviceList = services.map(s => {
-          const serviceName = s.name.split('/').pop();
-          return `- ${serviceName} (URL: ${s.uri})`;
+        const clusters = await listClusters(project, region);
+        const clusterList = clusters.map(c => {
+          const clusterName = c.name.split('/').pop();
+          return `- ${clusterName} (Status: ${c.status})`;
         }).join('\n');
         return {
           content: [{
             type: 'text',
-            text: `Services in project ${project} (location ${region}):\n${serviceList}`
+            text: `Clusters in project ${project} (location ${region}):\n${clusterList}`
           }]
         };
       } catch (error) {
         return {
           content: [{
             type: 'text',
-            text: `Error listing services for project ${project} (region ${region}): ${error.message}`
+            text: `Error listing clusters for project ${project} (region ${region}): ${error.message}`
           }]
         };
       }
     }
   );
 
-  // Dynamic resource for getting a specific service
+  // Dynamic resource for getting a specific cluster
   server.tool(
-    "get_service",
-    "Gets details for a specific Cloud Run service.",
+    "get_cluster",
+    "Gets details for a specific GKE cluster.",
     {
-      project: z.string().describe("Google Cloud project ID containing the service"),
-      region: z.string().describe("Region where the service is located").default('europe-west1'),
-      service: z.string().describe("Name of the Cloud Run service"),
+      project: z.string().describe("Google Cloud project ID containing the cluster"),
+      region: z.string().describe("Region where the cluster is located").default('europe-west1'),
+      cluster: z.string().describe("Name of the GKE cluster"),
     },
-    async ({ project, region, service }) => {
+    async ({ project, region, cluster }) => {
       if (typeof project !== 'string') {
         return { content: [{ type: 'text', text: "Error: Project ID must be provided." }] };
       }
-      if (typeof service !== 'string') {
-        return { content: [{ type: 'text', text: "Error: Service name must be provided." }] };
+      if (typeof cluster !== 'string') {
+        return { content: [{ type: 'text', text: "Error: Cluster name must be provided." }] };
       }
       try {
-        const serviceDetails = await getService(project, region, service);
-        if (serviceDetails) {
+        const clusterDetails = await getCluster(project, region, cluster);
+        if (clusterDetails) {
           return {
             content: [{
               type: 'text',
-              text: `Name: ${service}\nRegion: ${region}\nProject: ${project}\nURL: ${serviceDetails.uri}\nLast deployed by: ${serviceDetails.lastModifier}`
+              text: `Name: ${cluster}\nRegion: ${region}\nProject: ${project}\nStatus: ${clusterDetails.status}\nNode Count: ${clusterDetails.currentNodeCount}\nVersion: ${clusterDetails.currentMasterVersion}`
             }]
           };
         } else {
           return {
             content: [{
               type: 'text',
-              text: `Service ${service} not found in project ${project} (region ${region}).`
+              text: `Cluster ${cluster} not found in project ${project} (region ${region}).`
             }]
           };
         }
@@ -153,7 +153,7 @@ export const registerTools = (server) => {
         return {
           content: [{
             type: 'text',
-            text: `Error getting service ${service} in project ${project} (region ${region}): ${error.message}`
+            text: `Error getting cluster ${cluster} in project ${project} (region ${region}): ${error.message}`
           }]
         };
       }
@@ -162,14 +162,15 @@ export const registerTools = (server) => {
 
   server.tool(
     'deploy_local_files',
-    'Deploy local files to Cloud Run. Takes an array of absolute file paths from the local filesystem that will be deployed. Use this tool if the files exists on the user local filesystem.',
+    'Deploy local files to GKE. Takes an array of absolute file paths from the local filesystem that will be deployed. Use this tool if the files exists on the user local filesystem.',
     {
       project: z.string().describe('Google Cloud project ID. Do not select it yourself, make sure the user provides or confirms the project ID.'),
       region: z.string().optional().default('europe-west1').describe('Region to deploy the service to'),
-      service: z.string().optional().default('app').describe('Name of the Cloud Run service to deploy to'),
+      cluster: z.string().optional().default('default-cluster').describe('Name of the GKE cluster to deploy to'),
+      service: z.string().optional().default('app').describe('Name of the service to deploy'),
       files: z.array(z.string()).describe('Array of absolute file paths to deploy (e.g. ["/home/user/project/src/index.js", "/home/user/project/package.json"])'),
     },
-    async ({ project, region, service, files }) => {
+    async ({ project, region, cluster, service, files }) => {
       if (typeof project !== 'string') {
         throw new Error('Project must specified, please prompt the user for a valid existing Google Cloud project ID.');
       }
@@ -180,20 +181,20 @@ export const registerTools = (server) => {
         throw new Error('No files specified for deployment');
       }
 
-      // Deploy to Cloud Run
+      // Deploy to GKE
       try {
-        // TODO: Should we return intermediate progress messages? we'd need to use sendNotification for that, see https://github.com/modelcontextprotocol/typescript-sdk/blob/main/src/examples/server/jsonResponseStreamableHttp.ts#L46C24-L46C41
         const response = await deploy({
           projectId: project,
           serviceName: service,
           region: region,
+          clusterId: cluster,
           files: files,
         });
         return {
           content: [
             {
               type: 'text',
-              text: `Cloud Run service ${service} deployed in project ${project}\nCloud Console: https://console.cloud.google.com/run/detail/${region}/${service}?project=${project}\nService URL: ${response.uri}`,
+              text: `GKE service ${service} deployed in project ${project}\nCloud Console: https://console.cloud.google.com/kubernetes/workload/overview?project=${project}\nService URL: ${response.url}`,
             }
           ],
         };
@@ -202,24 +203,24 @@ export const registerTools = (server) => {
           content: [
             {
               type: 'text',
-              text: `Error deploying to Cloud Run: ${error.message || error}`,
+              text: `Error deploying to GKE: ${error.message || error}`,
             }
           ],
         };
       }
     });
 
-
   server.tool(
     'deploy_local_folder',
-    'Deploy a local folder to Cloud Run. Takes an absolute folder path from the local filesystem that will be deployed. Use this tool if the entire folder content needs to be deployed.',
+    'Deploy a local folder to GKE. Takes an absolute folder path from the local filesystem that will be deployed. Use this tool if the entire folder content needs to be deployed.',
     {
       project: z.string().describe('Google Cloud project ID. Do not select it yourself, make sure the user provides or confirms the project ID.'),
       region: z.string().optional().default('europe-west1').describe('Region to deploy the service to'),
-      service: z.string().optional().default('app').describe('Name of the Cloud Run service to deploy to'),
+      cluster: z.string().optional().default('default-cluster').describe('Name of the GKE cluster to deploy to'),
+      service: z.string().optional().default('app').describe('Name of the service to deploy'),
       folderPath: z.string().describe('Absolute path to the folder to deploy (e.g. "/home/user/project/src")'),
     },
-    async ({ project, region, service, folderPath }) => {
+    async ({ project, region, cluster, service, folderPath }) => {
       if (typeof project !== 'string') {
         throw new Error('Project must be specified, please prompt the user for a valid existing Google Cloud project ID.');
       }
@@ -227,19 +228,20 @@ export const registerTools = (server) => {
         throw new Error('Folder path must be specified and be a non-empty string.');
       }
 
-      // Deploy to Cloud Run
+      // Deploy to GKE
       try {
         const response = await deploy({
           projectId: project,
           serviceName: service,
           region: region,
+          clusterId: cluster,
           files: [folderPath], // Pass the folder path as a single item in an array
         });
         return {
           content: [
             {
               type: 'text',
-              text: `Cloud Run service ${service} deployed from folder ${folderPath} in project ${project}\nCloud Console: https://console.cloud.google.com/run/detail/${region}/${service}?project=${project}\nService URL: ${response.uri}`,
+              text: `GKE service ${service} deployed from folder ${folderPath} in project ${project}\nCloud Console: https://console.cloud.google.com/kubernetes/workload/overview?project=${project}\nService URL: ${response.url}`,
             }
           ],
         };
@@ -248,66 +250,7 @@ export const registerTools = (server) => {
           content: [
             {
               type: 'text',
-              text: `Error deploying folder to Cloud Run: ${error.message || error}`,
-            }
-          ],
-        };
-      }
-    }
-  );
-
-  server.tool(
-    'deploy_file_contents',
-    'Deploy files to Cloud Run by providing their contents directly. Takes an array of file objects containing filename and content. Use this tool if the files only exist in the current chat context.',
-    {
-      project: z.string().describe('Google Cloud project ID. Leave unset for the app to be deployed in a new project. If provided, make sure the user confirms the project ID they want to deploy to.'),
-      region: z.string().optional().default('europe-west1').describe('Region to deploy the service to'),
-      service: z.string().optional().default('app').describe('Name of the Cloud Run service to deploy to'),
-      files: z.array(z.object({
-        filename: z.string().describe('Name and path of the file (e.g. "src/index.js" or "data/config.json")'),
-        content: z.string().optional().describe('Text content of the file'),
-      })).describe('Array of file objects containing filename and content'),
-    },
-    async ({ project, region, service, files }) => {
-      if (typeof project !== 'string') {
-        throw new Error('Project must specified, please prompt the user for a valid existing Google Cloud project ID.');
-      }
-      if (typeof files !== 'object' || !Array.isArray(files)) {
-        throw new Error('Files must be specified');
-      }
-      if (files.length === 0) {
-        throw new Error('No files specified for deployment');
-      }
-
-      // Validate that each file has either content
-      for (const file of files) {
-        if (!file.content) {
-          throw new Error(`File ${file.filename} must have content`);
-        }
-      }
-
-      // Deploy to Cloud Run
-      try {
-        const response = await deploy({
-          projectId: project,
-          serviceName: service,
-          region: region,
-          files: files,
-        });
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Cloud Run service ${service} deployed in project ${project}\nCloud Console: https://console.cloud.google.com/run/detail/${region}/${service}?project=${project}\nService URL: ${response.uri}`,
-            }
-          ],
-        };
-      } catch (error) {
-        return {
-          content: [
-            {
-              type: 'text',
-              text: `Error deploying to Cloud Run: ${error.message || error}`,
+              text: `Error deploying to GKE: ${error.message || error}`,
             }
           ],
         };
@@ -323,63 +266,63 @@ export const registerToolsRemote = async (server) => {
   const currentProject = gcpInfo.project;
   const currentRegion = gcpInfo.region || 'europe-west1'; // Fallback if region is not available
 
-  // Listing Cloud Run services (Remote)
+  // Listing GKE clusters (Remote)
   server.tool(
-    "list_services",
-    `Lists Cloud Run services in GCP project ${currentProject} and a given region.`,
+    "list_clusters",
+    `Lists GKE clusters in GCP project ${currentProject} and a given region.`,
     {
-      region: z.string().describe("Region where the services are located").default(currentRegion),
+      region: z.string().describe("Region where the clusters are located").default(currentRegion),
     },
     async ({ region }) => {
       try {
-        const services = await listServices(currentProject, region);
-        const serviceList = services.map(s => {
-          const serviceName = s.name.split('/').pop();
-          return `- ${serviceName} (URL: ${s.uri})`;
+        const clusters = await listClusters(currentProject, region);
+        const clusterList = clusters.map(c => {
+          const clusterName = c.name.split('/').pop();
+          return `- ${clusterName} (Status: ${c.status})`;
         }).join('\n');
         return {
           content: [{
             type: 'text',
-            text: `Services in project ${currentProject} (location ${region}):\n${serviceList}`
+            text: `Clusters in project ${currentProject} (location ${region}):\n${clusterList}`
           }]
         };
       } catch (error) {
         return {
           content: [{
             type: 'text',
-            text: `Error listing services for project ${currentProject} (region ${region}): ${error.message}`
+            text: `Error listing clusters for project ${currentProject} (region ${region}): ${error.message}`
           }]
         };
       }
     }
   );
 
-  // Dynamic resource for getting a specific service (Remote)
+  // Dynamic resource for getting a specific cluster (Remote)
   server.tool(
-    "get_service",
-    `Gets details for a specific Cloud Run service in GCP project ${currentProject}.`,
+    "get_cluster",
+    `Gets details for a specific GKE cluster in GCP project ${currentProject}.`,
     {
-      region: z.string().describe("Region where the service is located").default(currentRegion),
-      service: z.string().describe("Name of the Cloud Run service"),
+      region: z.string().describe("Region where the cluster is located").default(currentRegion),
+      cluster: z.string().describe("Name of the GKE cluster"),
     },
-    async ({ region, service }) => {
-      if (typeof service !== 'string') {
-        return { content: [{ type: 'text', text: "Error: Service name must be provided." }] };
+    async ({ region, cluster }) => {
+      if (typeof cluster !== 'string') {
+        return { content: [{ type: 'text', text: "Error: Cluster name must be provided." }] };
       }
       try {
-        const serviceDetails = await getService(currentProject, region, service);
-        if (serviceDetails) {
+        const clusterDetails = await getCluster(currentProject, region, cluster);
+        if (clusterDetails) {
           return {
             content: [{
               type: 'text',
-              text: `Name: ${service}\nRegion: ${region}\nProject: ${currentProject}\nURL: ${serviceDetails.uri}\nLast deployed by: ${serviceDetails.lastModifier}`
+              text: `Name: ${cluster}\nRegion: ${region}\nProject: ${currentProject}\nStatus: ${clusterDetails.status}\nNode Count: ${clusterDetails.currentNodeCount}\nVersion: ${clusterDetails.currentMasterVersion}`
             }]
           };
         } else {
           return {
             content: [{
               type: 'text',
-              text: `Service ${service} not found in project ${currentProject} (region ${region}).`
+              text: `Cluster ${cluster} not found in project ${currentProject} (region ${region}).`
             }]
           };
         }
@@ -387,27 +330,28 @@ export const registerToolsRemote = async (server) => {
         return {
           content: [{
             type: 'text',
-            text: `Error getting service ${service} in project ${currentProject} (region ${region}): ${error.message}`
+            text: `Error getting cluster ${cluster} in project ${currentProject} (region ${region}): ${error.message}`
           }]
         };
       }
     }
   );
 
-  // Deploy file contents to Cloud Run (Remote)
+  // Deploy file contents to GKE (Remote)
   server.tool(
     'deploy_file_contents',
-    `Deploy files to Cloud Run by providing their contents directly to the GCP project ${currentProject}.`,
+    `Deploy files to GKE by providing their contents directly to the GCP project ${currentProject}.`,
     {
       region: z.string().optional().default(currentRegion).describe('Region to deploy the service to'),
-      service: z.string().optional().default('app').describe('Name of the Cloud Run service to deploy to'),
+      cluster: z.string().optional().default('default-cluster').describe('Name of the GKE cluster to deploy to'),
+      service: z.string().optional().default('app').describe('Name of the GKE service to deploy to'),
       files: z.array(z.object({
         filename: z.string().describe('Name and path of the file (e.g. "src/index.js" or "data/config.json")'),
         content: z.string().describe('Text content of the file'),
       })).describe('Array of file objects containing filename and content'),
     },
-    async ({ region, service, files }) => {
-      console.log(`New deploy request (remote): ${JSON.stringify({ project: currentProject, region, service, files })}`);
+    async ({ region, cluster, service, files }) => {
+      console.log(`New deploy request (remote): ${JSON.stringify({ project: currentProject, region, cluster, service, files })}`);
 
       if (typeof files !== 'object' || !Array.isArray(files) || files.length === 0) {
         throw new Error('Files must be specified');
@@ -420,19 +364,20 @@ export const registerToolsRemote = async (server) => {
         }
       }
 
-      // Deploy to Cloud Run
+      // Deploy to GKE
       try {
         const response = await deploy({
           projectId: currentProject,
           serviceName: service,
           region: region,
+          clusterId: cluster,
           files: files,
         });
         return {
           content: [
             {
               type: 'text',
-              text: `Cloud Run service ${service} deployed in project ${currentProject}\nCloud Console: https://console.cloud.google.com/run/detail/${region}/${service}?project=${currentProject}\nService URL: ${response.uri}`,
+              text: `GKE service ${service} deployed in project ${currentProject}\nCloud Console: https://console.cloud.google.com/kubernetes/workload/overview?project=${currentProject}\nService URL: ${response.url}`,
             }
           ],
         };
@@ -441,7 +386,7 @@ export const registerToolsRemote = async (server) => {
           content: [
             {
               type: 'text',
-              text: `Error deploying to Cloud Run: ${error.message || error}`,
+              text: `Error deploying to GKE: ${error.message || error}`,
             }
           ],
         };

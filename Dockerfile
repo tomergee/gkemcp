@@ -1,7 +1,7 @@
-FROM node:22-slim
-WORKDIR /usr/src/app
+FROM node:20-slim
+WORKDIR /app
 COPY package*.json ./
-RUN npm install --omit=dev
+RUN npm install
 COPY . .
-EXPOSE 3000
-CMD [ "node", "mcp-server.js" ]
+EXPOSE 8080
+CMD ["npm", "start"]

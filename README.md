@@ -1,10 +1,10 @@
-# MCP server to deploy code to Google Cloud Run
+# MCP server to deploy code to Google Kubernetes Engine (GKE)
 
-Enable MCP-compatible AI agents to deploy apps to Cloud Run.
+Enable MCP-compatible AI agents to deploy apps to GKE.
 
 ```json
 "mcpServers":{
-  "cloud-run": {
+  "gke": {
     "command": "npx",
     "args": ["-y", "https://github.com/GoogleCloudPlatform/cloud-run-mcp"]
   }
@@ -22,15 +22,15 @@ Deploy from AI assistant apps:
 Deploy from agent SDKs, like the [Google Gen AI SDK](https://ai.google.dev/gemini-api/docs/function-calling?example=meeting#use_model_context_protocol_mcp) or [Agent Development Kit](https://google.github.io/adk-docs/tools/mcp-tools/). 
 
 > [!NOTE]  
-> This is the repository of an MCP server to deploy code to Cloud Run, to learn how to **host** MCP servers on Cloud Run, [visit the Cloud Run documentation](https://cloud.google.com/run/docs/host-mcp-servers).
+> This is the repository of an MCP server to deploy code to GKE. The server can be hosted on any platform that supports Node.js.
 
 ## Tools
 
-- `deploy-file-contents`: Deploys files to Cloud Run by providing their contents directly.
-- `list-services`: Lists Cloud Run services in a given project and region.
-- `get-service`: Gets details for a specific Cloud Run service.
-- `deploy-local-files`*: Deploys files from the local file system to a Google Cloud Run service.
-- `deploy-local-folder`*: Deploys a local folder to a Google Cloud Run service.
+- `deploy-file-contents`: Deploys files to GKE by providing their contents directly.
+- `list-clusters`: Lists GKE clusters in a given project and region.
+- `get-cluster`: Gets details for a specific GKE cluster.
+- `deploy-local-files`*: Deploys files from the local file system to a GKE cluster.
+- `deploy-local-folder`*: Deploys a local folder to a GKE cluster.
 - `list-projects`*: Lists available GCP projects.
 - `create-project`*: Creates a new GCP project and attach it to the first available billing account. A project ID can be optionally specified.
 
@@ -38,7 +38,7 @@ _\* only available when running locally_
 
 ## Use as local MCP server
 
-Run the Cloud Run MCP server on your local machine using local Google Cloud credentials. This is best if you are using an AI-assisted IDE (e.g. Cursor) or a desktop AI application (e.g. Claude).
+Run the GKE MCP server on your local machine using local Google Cloud credentials. This is best if you are using an AI-assisted IDE (e.g. Cursor) or a desktop AI application (e.g. Claude).
 
 0. Install [Node.js](https://nodejs.org/en/download/) (LTS version recommended).
 
@@ -53,10 +53,16 @@ Run the Cloud Run MCP server on your local machine using local Google Cloud cred
    ```bash
    gcloud auth application-default login
    ```
-4. Update the MCP configuration file of your MCP client with the following:
+
+4. Install kubectl:
+   ```bash
+   gcloud components install kubectl
+   ```
+
+5. Update the MCP configuration file of your MCP client with the following:
 
    ```json 
-      "cloud-run": {
+      "gke": {
         "command": "npx",
         "args": ["-y", "https://github.com/GoogleCloudPlatform/cloud-run-mcp"]
       }
@@ -67,7 +73,7 @@ Run the Cloud Run MCP server on your local machine using local Google Cloud cred
 > [!WARNING]  
 > Do not use the remote MCP server without authentication. In the following instructions, we will use IAM authentication to secure the connection to the MCP server from your local machine. This is important to prevent unauthorized access to your Google Cloud resources.
 
-Run the Cloud Run MCP server itself on Cloud Run with connection from your local machine authenticated via IAM.
+Run the GKE MCP server itself on a GKE cluster with connection from your local machine authenticated via IAM.
 With this option, you will only be able to deploy code to the same Google Cloud project as where the MCP server is running.
 
 1. Install the [Google Cloud SDK](https://cloud.google.com/sdk/docs/install) and authenticate with your Google account.
@@ -81,33 +87,57 @@ With this option, you will only be able to deploy code to the same Google Cloud 
    ```bash
    gcloud config set project YOUR_PROJECT_ID
    ```
-4. Deploy the Cloud Run MCP server to Cloud Run:
+
+4. Create a GKE cluster if you don't have one:
    ```bash
-   gcloud run deploy cloud-run-mcp --image us-docker.pkg.dev/cloudrun/container/mcp --no-allow-unauthenticated
+   gcloud container clusters create mcp-server-cluster --zone europe-west1-b --num-nodes 1
    ```
-   When prompted, pick a region, for example `europe-west1`.
 
-   Note that the MCP server is *not* publicly accessible, it requires authentication via IAM.
-
-5. Run a Cloud Run proxy on your local machine to connect securely using your identity to the remote MCP server running on Cloud Run:
+5. Deploy the MCP server to GKE:
    ```bash
-   gcloud run services proxy cloud-run-mcp --port=3000 --region=REGION --project=PROJECT_ID
+   kubectl apply -f https://raw.githubusercontent.com/GoogleCloudPlatform/cloud-run-mcp/main/k8s/mcp-server.yaml
    ```
-   This will create a local proxy on port 3000 that forwards requests to the remote MCP server and injects your identity.
 
-6. Update the MCP configuration file of your MCP client with the following:
+6. Set up port forwarding to access the MCP server:
+   ```bash
+   kubectl port-forward service/mcp-server 3000:80
+   ```
+
+7. Update the MCP configuration file of your MCP client with the following:
 
    ```json 
-      "cloud-run": {
+      "gke": {
         "url": "http://localhost:3000/sse"
       }
-
    ```
+
    If your MCP client does not support the `url` attribute, you can use [mcp-remote](https://www.npmjs.com/package/mcp-remote):
 
    ```json 
-      "cloud-run": {
+      "gke": {
         "command": "npx",
         "args": ["-y", "mcp-remote", "http://localhost:3000/sse"]
       }
    ```
+
+## Prerequisites
+
+Before using this MCP server, ensure you have:
+
+1. A Google Cloud Platform account with billing enabled
+2. The Google Cloud SDK installed and configured
+3. kubectl installed and configured
+4. A GKE cluster created in your project
+5. The necessary IAM permissions to manage GKE resources
+
+## Required APIs
+
+The following Google Cloud APIs must be enabled in your project:
+
+- `container.googleapis.com` (GKE API)
+- `iam.googleapis.com` (IAM API)
+- `storage.googleapis.com` (Cloud Storage API)
+- `cloudbuild.googleapis.com` (Cloud Build API)
+- `artifactregistry.googleapis.com` (Artifact Registry API)
+
+The MCP server will attempt to enable these APIs automatically if they are not already enabled.
