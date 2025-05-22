@@ -1,5 +1,5 @@
 {
-  "name": "gke-mcp",
+  "name": "gkemcp",
   "version": "1.0.0",
   "description": "MCP server to deploy code to Google Kubernetes Engine (GKE)",
   "main": "mcp-server.js",
@@ -11,7 +11,7 @@
   },
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/GoogleCloudPlatform/cloud-run-mcp.git"
+    "url": "git+https://github.com/tomergee/gkemcp.git"
   },
   "keywords": [
     "mcp",
@@ -22,9 +22,9 @@
   "author": "Google LLC",
   "license": "Apache-2.0",
   "bugs": {
-    "url": "https://github.com/GoogleCloudPlatform/cloud-run-mcp/issues"
+    "url": "https://github.com/tomergee/gkemcp/issues"
   },
-  "homepage": "https://github.com/GoogleCloudPlatform/cloud-run-mcp#readme",
+  "homepage": "https://github.com/tomergee/gkemcp#readme",
   "dependencies": {
     "@google-cloud/artifact-registry": "^4.0.0",
     "@google-cloud/cloudbuild": "^5.0.0",
